@@ -11,7 +11,7 @@ import annotated_types
 import pytest
 from dirty_equals import IsPartialDict
 from mcp_types import CallToolResult, ContentBlock, EmbeddedResource, InputRequiredResult, TextContent
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import ReadOnly
 
 from mcp import MCPDeprecationWarning
@@ -1520,3 +1520,15 @@ def test_union_of_only_input_required_subclasses_yields_no_output_schema():
 
     meta = func_metadata(fn)
     assert meta.output_schema is None
+
+
+def test_direct_dict_output_rejects_results_below_annotated_minimum_length() -> None:
+    """A direct dictionary output must retain the same length validation as its declared annotation."""
+
+    def fn() -> Annotated[dict[str, int], Field(min_length=1)]:
+        return {}
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(Annotated[dict[str, int], Field(min_length=1)]).validate_python({})
+    with pytest.raises(ValidationError):
+        func_metadata(fn).convert_result(fn())
