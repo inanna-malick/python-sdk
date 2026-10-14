@@ -924,10 +924,11 @@ async def test_invalid_utf8_flushed_by_a_dying_server_does_not_break_shutdown(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio", "trio"])
 async def test_strict_decode_failure_reaches_consumer_before_peer_stdout_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pin the known gap where a fatal stdout decoding error waits for peer EOF.
+    """Reproduce the SDK gap where a fatal stdout decoding error waits for peer EOF.
 
     A fake byte peer is necessary because the typed server cannot emit malformed UTF-8.
     """
@@ -942,11 +943,12 @@ async def test_strict_decode_failure_reaches_consumer_before_peer_stdout_closes(
         on_stdin_close=lambda: process.exit(0),
         on_stdout_receive=bad_chunk_consumed.set,
     )
-    install_fake_process(monkeypatch, process)
+    terminated = install_fake_process(monkeypatch, process)
+    params = StdioServerParameters(command="fake-server", encoding_error_handler="strict")
 
     async def receive_until_failure() -> None:
         try:
-            async with stdio_client(FAKE_PARAMS) as (read_stream, _):
+            async with stdio_client(params) as (read_stream, _):
                 transport_entered.set()
                 try:
                     received = await read_stream.receive()
@@ -974,7 +976,9 @@ async def test_strict_decode_failure_reaches_consumer_before_peer_stdout_closes(
                 process.exit(0)
                 await consumer_done.wait()
 
-    assert failures, "consumer did not observe any failure even after peer EOF"
+    assert "transport UnicodeDecodeError" in failures
+    assert process.stdin_closed.is_set()
+    assert terminated == []
     assert failed_before_peer_eof, "fatal stdout decoding error was withheld until the peer closed stdout"
 
 
