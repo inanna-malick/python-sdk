@@ -1322,6 +1322,27 @@ def test_structured_output_aliases():
     assert structured_content_defaults["second"] is None
 
 
+def test_structured_output_serialization_alias_matches_schema() -> None:
+    """The published output schema names the serialized BaseModel properties."""
+
+    class Output(BaseModel):
+        value: int = Field(serialization_alias="wire")
+
+    def produce() -> Output:
+        return Output(value=7)
+
+    metadata = func_metadata(produce)
+    converted = metadata.convert_result(produce())
+    assert isinstance(converted, CallToolResult)
+    assert converted.structured_content == {"wire": 7}
+    assert metadata.output_schema == {
+        "properties": {"wire": {"title": "Wire", "type": "integer"}},
+        "required": ["wire"],
+        "title": "Output",
+        "type": "object",
+    }
+
+
 def test_basemodel_reserved_names():
     """Test that functions with parameters named after BaseModel methods work correctly"""
 
