@@ -924,6 +924,61 @@ async def test_invalid_utf8_flushed_by_a_dying_server_does_not_break_shutdown(
 
 
 @pytest.mark.anyio
+async def test_strict_decode_failure_reaches_consumer_before_peer_stdout_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the known gap where a fatal stdout decoding error waits for peer EOF.
+
+    A fake byte peer is necessary because the typed server cannot emit malformed UTF-8.
+    """
+    bad_chunk_consumed = anyio.Event()
+    transport_entered = anyio.Event()
+    consumer_failed = anyio.Event()
+    consumer_done = anyio.Event()
+    failures: list[str] = []
+    failed_before_peer_eof = False
+
+    process = FakeProcess(
+        on_stdin_close=lambda: process.exit(0),
+        on_stdout_receive=bad_chunk_consumed.set,
+    )
+    install_fake_process(monkeypatch, process)
+
+    async def receive_until_failure() -> None:
+        try:
+            async with stdio_client(FAKE_PARAMS) as (read_stream, _):
+                transport_entered.set()
+                try:
+                    received = await read_stream.receive()
+                except anyio.EndOfStream:
+                    failures.append("read-stream EOF")
+                else:
+                    assert isinstance(received, Exception)
+                    failures.append("read-stream error")
+                consumer_failed.set()
+        except* UnicodeDecodeError:
+            failures.append("transport UnicodeDecodeError")
+            consumer_failed.set()
+        consumer_done.set()
+
+    with anyio.fail_after(5):
+        async with anyio.create_task_group() as group:
+            group.start_soon(receive_until_failure)
+            try:
+                await transport_entered.wait()
+                await process.feed(b"\xff\n")
+                await bad_chunk_consumed.wait()
+                await anyio.wait_all_tasks_blocked()
+                failed_before_peer_eof = consumer_failed.is_set()
+            finally:
+                process.exit(0)
+                await consumer_done.wait()
+
+    assert failures, "consumer did not observe any failure even after peer EOF"
+    assert failed_before_peer_eof, "fatal stdout decoding error was withheld until the peer closed stdout"
+
+
+@pytest.mark.anyio
 async def test_a_kill_racing_a_pending_stdout_read_is_swallowed_during_shutdown(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
