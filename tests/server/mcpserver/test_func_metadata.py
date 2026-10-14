@@ -11,7 +11,7 @@ import annotated_types
 import pytest
 from dirty_equals import IsPartialDict
 from mcp_types import CallToolResult, ContentBlock, EmbeddedResource, InputRequiredResult, TextContent
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import ReadOnly
 
 from mcp import MCPDeprecationWarning
@@ -1520,3 +1520,21 @@ def test_union_of_only_input_required_subclasses_yields_no_output_schema():
 
     meta = func_metadata(fn)
     assert meta.output_schema is None
+
+
+def test_ordinary_class_output_rejects_values_outside_annotated_field_bounds() -> None:
+    """Reading ordinary-class type hints must preserve the declared field validation metadata."""
+
+    class Result:
+        value: Annotated[int, Field(gt=0)]
+
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    def fn() -> Result:
+        return Result(0)
+
+    with pytest.raises(ValidationError):
+        TypeAdapter(Annotated[int, Field(gt=0)]).validate_python(0)
+    with pytest.raises(ValidationError):
+        func_metadata(fn).convert_result(fn())
