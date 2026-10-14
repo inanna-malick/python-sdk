@@ -1,4 +1,6 @@
 import threading
+from collections import UserList
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -332,3 +334,13 @@ async def test_prompt_returning_media_with_an_unreadable_file_fails_to_render(tm
 
     with pytest.raises(ValueError):
         await Prompt.from_function(fn).render(None, Context())
+
+
+@pytest.mark.anyio
+async def test_prompt_render_accepts_user_list_as_a_sequence_result() -> None:
+    """A UserList is a declared Sequence prompt result and should emit its elements as messages."""
+
+    def prompt() -> Sequence[str]:
+        return UserList([])
+
+    assert await Prompt.from_function(prompt).render(None, Context()) == []
