@@ -1,4 +1,5 @@
 import threading
+from collections.abc import Awaitable, Coroutine
 from pathlib import Path
 from typing import Any
 
@@ -332,3 +333,30 @@ async def test_prompt_returning_media_with_an_unreadable_file_fails_to_render(tm
 
     with pytest.raises(ValueError):
         await Prompt.from_function(fn).render(None, Context())
+
+
+@pytest.mark.anyio
+async def test_prompt_render_awaits_awaitable_returned_by_sync_callback() -> None:
+    """PromptResult includes Awaitable results, including those returned by synchronous callbacks."""
+    created: list[Coroutine[Any, Any, list[str]]] = []
+
+    async def async_prompt() -> list[str]:
+        return []
+
+    def sync_prompt() -> Awaitable[list[str]]:
+        async def resolve() -> list[str]:
+            return []
+
+        coroutine = resolve()
+        created.append(coroutine)
+        return coroutine
+
+    async_messages = await Prompt.from_function(async_prompt).render(None, Context())
+    try:
+        sync_messages = await Prompt.from_function(sync_prompt).render(None, Context())
+    finally:
+        for coroutine in created:
+            coroutine.close()
+
+    assert async_messages == []
+    assert sync_messages == []
