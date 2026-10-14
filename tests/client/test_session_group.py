@@ -1,6 +1,7 @@
 import contextlib
 from unittest import mock
 
+import anyio
 import httpx2
 import mcp_types as types
 import pytest
@@ -13,6 +14,7 @@ from mcp.client.session_group import (
     StreamableHttpParameters,
 )
 from mcp.client.stdio import StdioServerParameters
+from mcp.server import Server, ServerRequestContext
 from mcp.shared.exceptions import MCPError
 
 
@@ -405,3 +407,32 @@ async def test_client_session_group_establish_session_parameterized(
             # 3. Assert returned values
             assert returned_server_info is mock_initialize_result.server_info
             assert returned_session is mock_entered_session
+
+
+@pytest.mark.anyio
+async def test_connecting_an_empty_caller_owned_session_succeeds() -> None:
+    """An empty catalog contributes no components but remains a managed session."""
+
+    async def tools(ctx: ServerRequestContext, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=[])
+
+    async def resources(
+        ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListResourcesResult:
+        return types.ListResourcesResult(resources=[])
+
+    async def prompts(
+        ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        return types.ListPromptsResult(prompts=[])
+
+    server = Server("empty", on_list_tools=tools, on_list_resources=resources, on_list_prompts=prompts)
+    group = ClientSessionGroup()
+    with anyio.fail_after(5):
+        async with mcp.Client(server) as client:
+            session = await group.connect_with_session(types.Implementation(name="empty", version="1"), client.session)
+            assert session is client.session
+            assert group.sessions == [session]
+            assert group.tools == group.resources == group.prompts == {}
+            await group.disconnect_from_server(session)
+            assert group.sessions == []
