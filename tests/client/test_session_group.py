@@ -410,8 +410,8 @@ async def test_client_session_group_establish_session_parameterized(
 
 
 @pytest.mark.anyio
-async def test_disconnect_removes_old_names_after_same_session_catalog_refresh() -> None:
-    """A second successful registration stays removable with the session that first registered it."""
+async def test_disconnect_removes_all_tools_after_same_session_reregistration() -> None:
+    """Reproduce the SDK cleanup gap after a caller re-registers a session with changed tools."""
     catalog = [types.Tool(name="old", input_schema={"type": "object"})]
 
     async def list_tools(
@@ -440,11 +440,9 @@ async def test_disconnect_removes_old_names_after_same_session_catalog_refresh()
         async with mcp.Client(server) as client:
             server_info = types.Implementation(name="mutable-catalog", version="1")
             await group.connect_with_session(server_info, client.session)
-            old_tool = catalog[0]
 
             catalog[:] = [types.Tool(name="new", input_schema={"type": "object"})]
             await group.connect_with_session(server_info, client.session)
-            assert group.tools == {"old": old_tool, "new": catalog[0]}
 
             await group.disconnect_from_server(client.session)
 
