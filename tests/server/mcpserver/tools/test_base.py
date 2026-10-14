@@ -147,3 +147,22 @@ async def test_tool_with_valid_x_mcp_header_annotations_is_registered():
         raise NotImplementedError
 
     assert [tool.name for tool in await mcp.list_tools()] == ["fetch"]
+
+
+@pytest.mark.anyio
+async def test_tool_reserved_parameter_does_not_collide_with_prefixed_field_name() -> None:
+    """SDK-defined: both Python parameters remain in the schema and bind to the function."""
+    mcp = MCPServer(name="srv")
+
+    @mcp.tool()
+    def inspect(model_dump: int, field_model_dump: int) -> str:
+        return f"seen:{model_dump}:{field_model_dump}"
+
+    async with Client(mcp) as client:
+        (tool,) = (await client.list_tools()).tools
+        assert {"model_dump", "field_model_dump"} <= tool.input_schema["properties"].keys()
+        result = await client.call_tool("inspect", {"model_dump": 1, "field_model_dump": 2})
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.is_error is False
+    assert result.content == [types.TextContent(type="text", text="seen:1:2")]
