@@ -4,7 +4,7 @@
 # pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownLambdaType=false
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple, NotRequired, Required, TypedDict
 
 import annotated_types
@@ -1320,6 +1320,51 @@ def test_structured_output_aliases():
     assert "field_second" not in structured_content_defaults
     assert structured_content_defaults["first"] is None
     assert structured_content_defaults["second"] is None
+
+
+def test_slotted_dataclass_structured_output_has_instance_fields() -> None:
+    """A slotted dataclass publishes and emits the fields present on its instances."""
+
+    @dataclass(slots=True)
+    class Output:
+        value: str
+
+    def produce() -> Output:
+        return Output(value="ok")
+
+    metadata = func_metadata(produce)
+    assert metadata.output_schema == {
+        "properties": {"value": {"title": "Value", "type": "string"}},
+        "required": ["value"],
+        "title": "Output",
+        "type": "object",
+    }
+    converted = metadata.convert_result(produce())
+    assert isinstance(converted, CallToolResult)
+    assert converted.structured_content == {"value": "ok"}
+
+
+def test_dataclass_initvar_is_excluded_from_structured_output() -> None:
+    """An InitVar is only constructor input and is not part of the returned instance."""
+
+    @dataclass
+    class Output:
+        value: str
+        token: InitVar[str]
+
+    def produce() -> Output:
+        return Output(value="ok", token="constructor-only")
+
+    metadata = func_metadata(produce)
+    assert metadata.output_schema == {
+        "properties": {"value": {"title": "Value", "type": "string"}},
+        "required": ["value"],
+        "title": "Output",
+        "type": "object",
+    }
+    converted = metadata.convert_result(produce())
+    assert isinstance(converted, CallToolResult)
+    assert converted.structured_content == {"value": "ok"}
 
 
 def test_basemodel_reserved_names():
