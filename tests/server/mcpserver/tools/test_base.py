@@ -147,3 +147,21 @@ async def test_tool_with_valid_x_mcp_header_annotations_is_registered():
         raise NotImplementedError
 
     assert [tool.name for tool in await mcp.list_tools()] == ["fetch"]
+
+
+@pytest.mark.anyio
+async def test_tool_field_alias_has_a_standalone_wire_to_python_reproduction() -> None:
+    """SDK-defined: a schema's accepted alias must reach the matching Python signature parameter."""
+    mcp = MCPServer(name="srv")
+
+    @mcp.tool()
+    def echo(value: Annotated[str, Field(alias="wire")]) -> str:
+        return f"seen:{value}"
+
+    async with Client(mcp) as client:
+        (tool,) = (await client.list_tools()).tools
+        assert "wire" in tool.input_schema["properties"]
+        result = await client.call_tool("echo", {"wire": "ok"})
+    assert isinstance(result, types.CallToolResult)
+    assert result.is_error is False
+    assert result.content == [types.TextContent(type="text", text="seen:ok")]
