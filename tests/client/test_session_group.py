@@ -1,6 +1,7 @@
 import contextlib
 from unittest import mock
 
+import anyio
 import httpx2
 import mcp_types as types
 import pytest
@@ -13,6 +14,7 @@ from mcp.client.session_group import (
     StreamableHttpParameters,
 )
 from mcp.client.stdio import StdioServerParameters
+from mcp.server import Server, ServerRequestContext
 from mcp.shared.exceptions import MCPError
 
 
@@ -405,3 +407,46 @@ async def test_client_session_group_establish_session_parameterized(
             # 3. Assert returned values
             assert returned_server_info is mock_initialize_result.server_info
             assert returned_session is mock_entered_session
+
+
+@pytest.mark.anyio
+async def test_disconnect_removes_old_names_after_same_session_catalog_refresh() -> None:
+    """A second successful registration stays removable with the session that first registered it."""
+    catalog = [types.Tool(name="old", input_schema={"type": "object"})]
+
+    async def list_tools(
+        ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
+        return types.ListToolsResult(tools=list(catalog))
+
+    async def list_resources(
+        ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListResourcesResult:
+        return types.ListResourcesResult(resources=[])
+
+    async def list_prompts(
+        ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListPromptsResult:
+        return types.ListPromptsResult(prompts=[])
+
+    server = Server(
+        "mutable-catalog",
+        on_list_tools=list_tools,
+        on_list_resources=list_resources,
+        on_list_prompts=list_prompts,
+    )
+    group = ClientSessionGroup()
+    with anyio.fail_after(5):
+        async with mcp.Client(server) as client:
+            server_info = types.Implementation(name="mutable-catalog", version="1")
+            await group.connect_with_session(server_info, client.session)
+            old_tool = catalog[0]
+
+            catalog[:] = [types.Tool(name="new", input_schema={"type": "object"})]
+            await group.connect_with_session(server_info, client.session)
+            assert group.tools == {"old": old_tool, "new": catalog[0]}
+
+            await group.disconnect_from_server(client.session)
+
+    assert group.sessions == []
+    assert group.tools == {}
