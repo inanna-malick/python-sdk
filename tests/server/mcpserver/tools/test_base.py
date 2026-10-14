@@ -1,9 +1,10 @@
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Protocol, cast
 
 import mcp_types as types
 import pytest
 from inline_snapshot import snapshot
+from jsonschema import Draft202012Validator
 from pydantic import Field
 
 from mcp import Client
@@ -147,3 +148,40 @@ async def test_tool_with_valid_x_mcp_header_annotations_is_registered():
         raise NotImplementedError
 
     assert [tool.name for tool in await mcp.list_tools()] == ["fetch"]
+
+
+class _InputSchemaValidator(Protocol):
+    def validate(self, instance: object) -> None: ...
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("value", ["null", "[]"])
+async def test_nullable_json_string_reaches_the_handler_unchanged(value: str) -> None:
+    """SDK contract gap: schema-valid nullable strings should retain their string value."""
+
+    def echo(value: str | None) -> dict[str, str | None]:
+        return {"type": type(value).__name__, "value": value}
+
+    def nonnullable(value: str) -> dict[str, str | None]:
+        return {"type": type(value).__name__, "value": value}
+
+    def aliased(value: Annotated[str | None, Field(validation_alias="wire")]) -> dict[str, str | None]:
+        return {"type": type(value).__name__, "value": value}
+
+    expected = {"type": "str", "value": value}
+    server = MCPServer(name="nullable-string-repro")
+    for handler in (echo, nonnullable, aliased):
+        server.add_tool(handler)
+    async with Client(server) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        for name, arguments in (("nonnullable", {"value": value}), ("aliased", {"wire": value})):
+            cast(_InputSchemaValidator, Draft202012Validator(tools[name].input_schema)).validate(arguments)
+            control = await client.call_tool(name, arguments)
+            assert isinstance(control, types.CallToolResult)
+            assert control.is_error is False
+            assert control.structured_content == expected
+        cast(_InputSchemaValidator, Draft202012Validator(tools["echo"].input_schema)).validate({"value": value})
+        result = await client.call_tool("echo", {"value": value})
+    assert isinstance(result, types.CallToolResult)
+    assert result.is_error is False
+    assert result.structured_content == expected
