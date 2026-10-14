@@ -147,3 +147,23 @@ async def test_tool_with_valid_x_mcp_header_annotations_is_registered():
         raise NotImplementedError
 
     assert [tool.name for tool in await mcp.list_tools()] == ["fetch"]
+
+
+def _tool_with_positional_only_value(value: str, /) -> str:
+    return f"seen:{value}"
+
+
+@pytest.mark.anyio
+async def test_positional_only_tool_parameter_has_a_callable_schema() -> None:
+    """SDK-defined: a positional-only parameter advertised in the schema is invokable."""
+    mcp = MCPServer(name="srv")
+    mcp.add_tool(_tool_with_positional_only_value, name="inspect")
+
+    async with Client(mcp) as client:
+        (tool,) = (await client.list_tools()).tools
+        assert "value" in tool.input_schema["properties"]
+        result = await client.call_tool("inspect", {"value": "ok"})
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.is_error is False
+    assert result.content == [types.TextContent(type="text", text="seen:ok")]
